@@ -1,4 +1,4 @@
-module github.com/deltron-fr/kv-engine
+module github.com/deltron-fr/silt
 
 go 1.24.4
 
