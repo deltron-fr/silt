@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -16,7 +17,8 @@ import (
 const url = "http://localhost:8080/"
 
 func main() {
-	file, err := os.OpenFile("put.txt", os.O_RDONLY, 0o644)
+	fileName := flag.String("file", "put.txt", "specify input file")
+	file, err := os.OpenFile(*fileName, os.O_RDONLY, 0o644)
 	if err != nil {
 		log.Printf("couldn't open file: %v", err)
 		return
@@ -49,6 +51,8 @@ func main() {
 func makeRequest(hdrhist *hdrhistogram.Histogram, requestLine string) error {
 	start := time.Now()
 
+	delay := 5
+
 	defer func() {
 		duration := time.Since(start).Milliseconds()
 		hdrhist.RecordValue(duration)
@@ -59,17 +63,30 @@ func makeRequest(hdrhist *hdrhistogram.Histogram, requestLine string) error {
 		return fmt.Errorf("invalid request line")
 	}
 
+	var res *http.Response
+
 	if parts[0] == "PUT" {
-		req, err := http.NewRequest(http.MethodPut, url+parts[1], strings.NewReader(parts[2]))
-		if err != nil {
-			return err
+
+		for {
+			req, err := http.NewRequest(http.MethodPut, url+parts[1], strings.NewReader(parts[2]))
+			if err != nil {
+				return err
+			}
+
+			client := &http.Client{Timeout: 3 * time.Second}
+			res, err = client.Do(req)
+			if err != nil {
+				fmt.Println(err)
+				delay *= 2
+				time.Sleep(time.Duration(delay) * time.Millisecond)
+				fmt.Println("trying request again. Timeout: ", delay, "ms")
+				continue
+			}
+
+			delay = 5
+			break
 		}
 
-		client := &http.Client{Timeout: 5 * time.Second}
-		res, err := client.Do(req)
-		if err != nil {
-			return err
-		}
 		defer res.Body.Close()
 
 		if res.StatusCode != http.StatusOK {
@@ -79,16 +96,24 @@ func makeRequest(hdrhist *hdrhistogram.Histogram, requestLine string) error {
 	}
 
 	if parts[0] == "GET" {
-		req, err := http.NewRequest(http.MethodGet, url+parts[1], nil)
-		if err != nil {
-			return err
+		for {
+			req, err := http.NewRequest(http.MethodGet, url+parts[1], nil)
+			if err != nil {
+				return err
+			}
+
+			client := &http.Client{Timeout: 5 * time.Second}
+			res, err = client.Do(req)
+			if err != nil {
+				delay *= 2
+				time.Sleep(time.Duration(delay) * time.Millisecond)
+				fmt.Println("trying request again. Timeout: ", delay, "ms")
+				continue
+			}
+
+			break
 		}
 
-		client := &http.Client{Timeout: 5 * time.Second}
-		res, err := client.Do(req)
-		if err != nil {
-			return err
-		}
 		defer res.Body.Close()
 
 		if parts[2] == "NOT_FOUND" && res.StatusCode == http.StatusNotFound {
