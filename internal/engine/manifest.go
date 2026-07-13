@@ -15,7 +15,7 @@ func (e *Engine) manifestStartup() error {
 	manifestFile, err := os.Open(e.Manifest)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			_, err = os.Create(e.WAL)
+			_, err = os.Create(e.Manifest)
 			if err != nil {
 				return err
 			}

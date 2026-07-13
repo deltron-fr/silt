@@ -10,12 +10,15 @@ import (
 	"sync"
 )
 
+const NotExist = "Null"
+
 type Engine struct {
-	Store        map[string]string
-	SSTfileCount int
-	Manifest     string
-	WAL          string
-	mu           sync.RWMutex
+	Store         map[string]string
+	SSTfileCount  int
+	Manifest      string
+	NegativeCache *LRUCache
+	WAL           string
+	mu            sync.RWMutex
 }
 
 type KV struct {
@@ -25,9 +28,10 @@ type KV struct {
 
 func NewEngine() *Engine {
 	return &Engine{
-		Store:    make(map[string]string),
-		Manifest: "MANIFEST",
-		WAL:      "wal.db",
+		NegativeCache: NewCache(100),
+		Store:         make(map[string]string),
+		Manifest:      "MANIFEST",
+		WAL:           "wal.db",
 	}
 }
 
@@ -53,6 +57,10 @@ func (e *Engine) UpsertKeyValue(key, value string) error {
 
 	e.Store[key] = value
 
+	if e.NegativeCache.Exists(key) {
+		e.NegativeCache.Delete(key)
+	}
+
 	err := e.runWAL(key, value)
 	if err != nil {
 		return err
@@ -69,8 +77,13 @@ func (e *Engine) UpsertKeyValue(key, value string) error {
 }
 
 func (e *Engine) RetrieveKeyValue(key string) (string, error) {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	v := e.NegativeCache.Get(key)
+	if v == NotExist {
+		return "", fmt.Errorf("key does not exist")
+	}
 
 	value, ok := e.Store[key]
 	if ok {
@@ -83,6 +96,7 @@ func (e *Engine) RetrieveKeyValue(key string) (string, error) {
 	}
 
 	if retrievedValue == "" {
+		e.NegativeCache.Put(key, NotExist)
 		return "", fmt.Errorf("key does not exist")
 	}
 
