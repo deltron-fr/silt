@@ -34,10 +34,18 @@ func (e *Engine) writeSSTable() error {
 
 	var keyValues []KV
 	for _, k := range keys {
-		keyValues = append(keyValues, KV{
-			Key:   k,
-			Value: e.Store[k],
-		})
+		value := e.Store[k]
+		if value.op == OpDelete {
+			keyValues = append(keyValues, KV{
+				Key:     k,
+				Deleted: true,
+			})
+		} else {
+			keyValues = append(keyValues, KV{
+				Key:   k,
+				Value: e.Store[k].value,
+			})
+		}
 	}
 
 	js, err := json.Marshal(keyValues)
@@ -74,7 +82,7 @@ func (e *Engine) writeSSTable() error {
 		return fmt.Errorf("couldn't update manifest file: %v", err)
 	}
 
-	e.Store = make(map[string]string)
+	e.Store = make(map[string]Value)
 	WALFile, err := os.OpenFile(e.WAL, os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		return err

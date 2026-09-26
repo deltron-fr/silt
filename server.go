@@ -52,3 +52,15 @@ func (s *Server) handleCreateKV(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 }
+
+func (s *Server) handleDeleteKV(w http.ResponseWriter, req *http.Request) {
+	key := req.PathValue("key")
+
+	err := s.engine.DeleteKeyValue(key)
+	if err != nil {
+		/// TODO: change this
+		http.Error(w, fmt.Sprintf("an error occured: %v", err), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

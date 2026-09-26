@@ -10,26 +10,37 @@ import (
 	"sync"
 )
 
-const NotExist = "Null"
+const (
+	NotExist = "Null"
+	OpDelete = "delete"
+	OpPut    = "put"
+)
 
 type Engine struct {
-	Store         map[string]string
-	SSTfileCount  int
+	Store         map[string]Value
 	Manifest      string
-	NegativeCache *LRUCache
 	WAL           string
+	SSTfileCount  int
+	OpCounter     int
+	NegativeCache *LRUCache
 	mu            sync.RWMutex
 }
 
 type KV struct {
-	Key   string `json:"key"`
-	Value string `json:"value"`
+	Key     string `json:"key"`
+	Value   string `json:"value,omitempty"`
+	Deleted bool   `json:"deleted,omitempty"`
+}
+
+type Value struct {
+	value string
+	op    string
 }
 
 func NewEngine() *Engine {
 	return &Engine{
 		NegativeCache: NewCache(100),
-		Store:         make(map[string]string),
+		Store:         make(map[string]Value),
 		Manifest:      "MANIFEST",
 		WAL:           "wal.db",
 	}
@@ -55,13 +66,14 @@ func (e *Engine) UpsertKeyValue(key, value string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	e.Store[key] = value
+	e.Store[key] = Value{value: value, op: OpPut}
+	e.OpCounter++
 
 	if e.NegativeCache.Exists(key) {
 		e.NegativeCache.Delete(key)
 	}
 
-	err := e.runWAL(key, value)
+	err := e.runWAL(key, value, OpPut)
 	if err != nil {
 		return err
 	}
@@ -87,7 +99,7 @@ func (e *Engine) RetrieveKeyValue(key string) (string, error) {
 
 	value, ok := e.Store[key]
 	if ok {
-		return value, nil
+		return value.value, nil
 	}
 
 	retrievedValue, err := e.retrieveFromSST(key)
@@ -101,6 +113,25 @@ func (e *Engine) RetrieveKeyValue(key string) (string, error) {
 	}
 
 	return retrievedValue, nil
+}
+
+func (e *Engine) DeleteKeyValue(key string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	err := e.runWAL(key, "", "delete")
+	if err != nil {
+		return err
+	}
+
+	e.Store[key] = Value{op: OpDelete}
+	e.OpCounter++
+	return nil
+}
+
+func (e *Engine) Compact() error {
+	// TODO: write the code for this
+	return nil
 }
 
 func (e *Engine) retrieveFromSST(key string) (string, error) {

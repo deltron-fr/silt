@@ -13,7 +13,7 @@ import (
 type WALRecord struct {
 	Op    string `json:"op"`
 	Key   string `json:"key"`
-	Value string `json:"value"`
+	Value string `json:"value,omitempty"`
 }
 
 func (e *Engine) replayWAL() error {
@@ -57,23 +57,32 @@ func (e *Engine) replayWAL() error {
 			return err
 		}
 
-		e.Store[record.Key] = record.Value
+		e.Store[record.Key] = Value{value: record.Value, op: record.Op}
 	}
 
 	return nil
 }
 
-func (e *Engine) runWAL(key, value string) error {
+func (e *Engine) runWAL(key, value, op string) error {
 	WALFile, err := os.OpenFile(e.WAL, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return fmt.Errorf("couldn't open manifest file: %v", err)
 	}
 	defer WALFile.Close()
 
-	record := WALRecord{
-		Op:    "put",
-		Key:   key,
-		Value: value,
+	var record WALRecord
+	switch op {
+	case OpPut:
+		record = WALRecord{
+			Op:    op,
+			Key:   key,
+			Value: value,
+		}
+	case OpDelete:
+		record = WALRecord{
+			Op:  op,
+			Key: key,
+		}
 	}
 
 	js, err := json.Marshal(&record)
