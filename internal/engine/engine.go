@@ -66,7 +66,6 @@ func (e *Engine) UpsertKeyValue(key, value string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	e.Store[key] = Value{value: value, op: OpPut}
 	e.OpCounter++
 
 	if e.NegativeCache.Exists(key) {
@@ -78,11 +77,21 @@ func (e *Engine) UpsertKeyValue(key, value string) error {
 		return err
 	}
 
+	e.Store[key] = Value{value: value, op: OpPut}
+
 	if len(e.Store) >= 2000 {
 		err = e.writeSSTable()
 		if err != nil {
 			return err
 		}
+	}
+
+	if e.OpCounter >= 10000 {
+		err = e.Compaction()
+		if err != nil {
+			return err
+		}
+		e.OpCounter = 0
 	}
 
 	return nil
@@ -98,16 +107,21 @@ func (e *Engine) RetrieveKeyValue(key string) (string, error) {
 	}
 
 	value, ok := e.Store[key]
+
+	if value.op == OpDelete {
+		return "", fmt.Errorf("key does not exist")
+	}
+
 	if ok {
 		return value.value, nil
 	}
 
-	retrievedValue, err := e.retrieveFromSST(key)
+	retrievedValue, found, err := e.retrieveFromSST(key)
 	if err != nil {
 		return "", err
 	}
 
-	if retrievedValue == "" {
+	if !found {
 		e.NegativeCache.Put(key, NotExist)
 		return "", fmt.Errorf("key does not exist")
 	}
@@ -126,26 +140,32 @@ func (e *Engine) DeleteKeyValue(key string) error {
 
 	e.Store[key] = Value{op: OpDelete}
 	e.OpCounter++
+
+	if e.OpCounter >= 10000 {
+		err = e.Compaction()
+		if err != nil {
+			return err
+		}
+		e.OpCounter = 0
+	}
+
 	return nil
 }
 
-func (e *Engine) Compact() error {
-	// TODO: write the code for this
-	return nil
-}
-
-func (e *Engine) retrieveFromSST(key string) (string, error) {
+func (e *Engine) retrieveFromSST(key string) (string, bool, error) {
 	var value string
+	found := false
+	deleted := false
 
 	manifestFile, err := os.OpenFile(e.Manifest, os.O_CREATE|os.O_RDONLY, 0o644)
 	if err != nil {
-		return "", fmt.Errorf("couldn't open manifest file: %v", err)
+		return "", false, fmt.Errorf("couldn't open manifest file: %v", err)
 	}
 	defer manifestFile.Close()
 
 	manifastData, err := io.ReadAll(manifestFile)
 	if err != nil {
-		return "", fmt.Errorf("reading data: %v", err)
+		return "", false, fmt.Errorf("reading data: %v", err)
 	}
 
 	fileNames := strings.Fields(string(manifastData))
@@ -155,33 +175,39 @@ func (e *Engine) retrieveFromSST(key string) (string, error) {
 		sstFile, err := os.OpenFile(fileName, os.O_RDONLY, 0o644)
 		if err != nil {
 			log.Printf("couldn't open sst file: %v", err)
-			return "", fmt.Errorf("couldn't open sst file: %v", err)
+			return "", false, fmt.Errorf("couldn't open sst file: %v", err)
 		}
 		defer sstFile.Close()
 
 		data, err := io.ReadAll(sstFile)
 		if err != nil {
-			return "", fmt.Errorf("reading data: %v", err)
+			return "", false, fmt.Errorf("reading data: %v", err)
 		}
 
 		var KeyValues []KV
 
 		err = json.Unmarshal(data, &KeyValues)
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 
 		for _, kv := range KeyValues {
 			if kv.Key == key {
-				value = kv.Value
+				if kv.Deleted {
+					deleted = true
+					break
+				} else {
+					found = true
+					value = kv.Value
+				}
 				break
 			}
 		}
 
-		if value != "" {
+		if found || deleted {
 			break
 		}
 	}
 
-	return value, nil
+	return value, found, nil
 }

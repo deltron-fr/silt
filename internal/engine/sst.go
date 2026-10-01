@@ -3,7 +3,9 @@ package engine
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -21,14 +23,20 @@ func (e *Engine) writeSSTable() error {
 	}
 	defer sstFile.Close()
 
-	manifestFile, err := os.OpenFile(e.Manifest, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o644)
+	manifestFile, err := os.Open(e.Manifest)
 	if err != nil {
-		return fmt.Errorf("couldn't open manifest file: %v", err)
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("couldn't open manifest file: %v", err)
+		}
 	}
 	defer manifestFile.Close()
 
-	manifestFile.Write([]byte(fileName + "\n"))
-	e.SSTfileCount++
+	currentManifestData, err := io.ReadAll(manifestFile)
+	if err != nil {
+		return err
+	}
+
+	manifestData := append(currentManifestData, []byte(fileName+"\n")...)
 
 	keys := e.sortHashMap()
 
@@ -77,10 +85,13 @@ func (e *Engine) writeSSTable() error {
 		return fmt.Errorf("couldn't flush file content(directory) to disk: %v", err)
 	}
 
-	err = e.updateManifest(manifestFile)
+	// Publish the SSTable in the MANIFEST before clearing the WAL. If the
+	// process stops between these steps, replaying the WAL is still harmless.
+	err = e.updateManifest(manifestData)
 	if err != nil {
 		return fmt.Errorf("couldn't update manifest file: %v", err)
 	}
+	e.SSTfileCount++
 
 	e.Store = make(map[string]Value)
 	WALFile, err := os.OpenFile(e.WAL, os.O_WRONLY|os.O_TRUNC, 0o644)

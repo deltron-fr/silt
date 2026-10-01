@@ -18,6 +18,8 @@ const url = "http://localhost:8080/"
 
 func main() {
 	fileName := flag.String("file", "put.txt", "specify input file")
+	flag.Parse()
+
 	file, err := os.OpenFile(*fileName, os.O_RDONLY, 0o644)
 	if err != nil {
 		log.Printf("couldn't open file: %v", err)
@@ -59,7 +61,10 @@ func makeRequest(hdrhist *hdrhistogram.Histogram, requestLine string) error {
 	}()
 
 	parts := strings.Split(requestLine, " ")
-	if len(parts) != 3 {
+	switch {
+	case len(parts) == 3 && (parts[0] == "PUT" || parts[0] == "GET"):
+	case len(parts) == 2 && parts[0] == "DELETE":
+	default:
 		return fmt.Errorf("invalid request line")
 	}
 
@@ -92,6 +97,33 @@ func makeRequest(hdrhist *hdrhistogram.Histogram, requestLine string) error {
 		if res.StatusCode != http.StatusOK {
 			data, _ := io.ReadAll(res.Body)
 			return fmt.Errorf("an error occured performing PUT action: %s", string(data))
+		}
+	}
+
+	if parts[0] == "DELETE" {
+		for {
+			req, err := http.NewRequest(http.MethodDelete, url+parts[1], nil)
+			if err != nil {
+				return err
+			}
+
+			client := &http.Client{Timeout: 3 * time.Second}
+			res, err = client.Do(req)
+			if err != nil {
+				fmt.Println(err)
+				delay *= 2
+				time.Sleep(time.Duration(delay) * time.Millisecond)
+				fmt.Println("trying request again. Timeout: ", delay, "ms")
+				continue
+			}
+
+			defer res.Body.Close()
+			break
+		}
+
+		if res.StatusCode != http.StatusNoContent {
+			data, _ := io.ReadAll(res.Body)
+			return fmt.Errorf("an error occured performing DELETE action: %s", string(data))
 		}
 	}
 

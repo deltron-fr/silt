@@ -13,7 +13,7 @@ import (
 type WALRecord struct {
 	Op    string `json:"op"`
 	Key   string `json:"key"`
-	Value string `json:"value,omitempty"`
+	Value string `json:"value"`
 }
 
 func (e *Engine) replayWAL() error {
@@ -46,7 +46,8 @@ func (e *Engine) replayWAL() error {
 	defer e.mu.Unlock()
 	for i, js := range jsParts {
 
-		// TODO: revisit this condition
+		// runWAL terminates every record with a newline, so a complete WAL has
+		// one empty split segment at the end; it is not another record.
 		if i == len(jsParts)-1 {
 			break
 		}

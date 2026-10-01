@@ -32,17 +32,23 @@ func (e *Engine) manifestStartup() error {
 		return fmt.Errorf("reading data from manifest: %v", err)
 	}
 
-	sstFileNames := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(sstFileNames) == 0 {
+	manifestData := strings.TrimSpace(string(data))
+	if manifestData == "" {
 		return nil
 	}
 
-	fmt.Println(sstFileNames)
+	sstFileNames := strings.Fields(manifestData)
 
 	lastFileName := sstFileNames[len(sstFileNames)-1]
-	fmt.Println("last file name: ", lastFileName)
+	const (
+		prefix = "sst-"
+		suffix = ".json"
+	)
+	if !strings.HasPrefix(lastFileName, prefix) || !strings.HasSuffix(lastFileName, suffix) {
+		return fmt.Errorf("invalid SSTable filename in manifest: %q", lastFileName)
+	}
 
-	fileCount, err := strconv.Atoi(lastFileName[4 : len(lastFileName)-5])
+	fileCount, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(lastFileName, prefix), suffix))
 	if err != nil {
 		return err
 	}
@@ -51,16 +57,9 @@ func (e *Engine) manifestStartup() error {
 	return nil
 }
 
-func (e *Engine) updateManifest(file *os.File) error {
-	if _, err := file.Seek(0, 0); err != nil {
-		return fmt.Errorf("failed to seek to start of manifest: %v", err)
-	}
-
-	data, err := io.ReadAll(file)
-	if err != nil {
-		return fmt.Errorf("reading data: %v", err)
-	}
-
+func (e *Engine) updateManifest(data []byte) error {
+	// Replacing a fully synced temporary file prevents readers from seeing a
+	// partially rewritten MANIFEST after a crash.
 	tmpFile, err := os.OpenFile(e.Manifest+".tmp", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err

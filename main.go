@@ -11,6 +11,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("PUT /{key}", server.handleCreateKV)
 	mux.HandleFunc("GET /{key}", server.handleRetrieveKV)
+	mux.HandleFunc("DELETE /{key}", server.handleDeleteKV)
 
 	srv := http.Server{
 		Addr:    ":8080",
